@@ -31,7 +31,10 @@ var ConfigPaths []string = []string{
 	".changie.yml",
 }
 
-var ErrConfigNotFound = errors.New("no changie config found")
+var (
+	ErrConfigNotFound   = errors.New("no changie config found")
+	ErrInvalidAutoLevel = errors.New("auto level must resolve to major, minor, patch or none")
+)
 
 // GetVersions will return, in semver sorted order, all released versions
 type GetVersions func(Config) ([]*semver.Version, error)
@@ -42,15 +45,15 @@ type KindConfig struct {
 	// By default it will use label if no key is provided.
 	// example: yaml
 	// key: feature
-	Key string `yaml:",omitempty"`
+	Key string `yaml:"key,omitempty"`
 	// Label is the value used in the prompt when selecting a kind.
 	// example: yaml
 	// label: Feature
-	Label string `yaml:",omitempty" required:"true"`
+	Label string `yaml:"label,omitempty" required:"true"`
 	// Format will override the root kind format when building the kind header.
 	// example: yaml
 	// format: '### {{.Kind}} **Breaking Changes**'
-	Format string `yaml:",omitempty"`
+	Format string `yaml:"format,omitempty"`
 	// Change format will override the root change format when building changes specific to this kind.
 	// example: yaml
 	// changeFormat: 'Breaking: {{.Custom.Body}}
@@ -69,9 +72,12 @@ type KindConfig struct {
 	// Possible values are major, minor, patch or none and the highest one is used if
 	// multiple changes are found. none will not bump the version.
 	// Only none changes is not a valid bump and will fail to batch.
+	// Auto also supports go templates using the change as the template data, so the
+	// level can be calculated from custom values. The rendered value must be one of
+	// the possible values listed above.
 	// example: yaml
-	// auto: minor
-	AutoLevel string `yaml:"auto,omitempty"`
+	// auto: '{{if eq .Custom.Breaking "Yes"}}major{{else}}patch{{end}}'
+	AutoLevel string `yaml:"auto,omitempty" templateType:"Change"`
 }
 
 // KeyOrLabel returns the kind config key if set, otherwise the label
@@ -81,6 +87,27 @@ func (kc *KindConfig) KeyOrLabel() string {
 	}
 
 	return kc.Label
+}
+
+// AutoLevelForChange resolves the auto bump level for the provided change.
+// The auto value supports go templates using the change as the template data,
+// so the level can be derived from custom values.
+func (kc *KindConfig) AutoLevelForChange(cache *TemplateCache, change Change) (string, error) {
+	if kc.AutoLevel == "" {
+		return EmptyLevel, ErrMissingAutoLevel
+	}
+
+	level, err := cache.ExecuteString(kc.AutoLevel, change)
+	if err != nil {
+		return EmptyLevel, err
+	}
+
+	switch level {
+	case MajorLevel, MinorLevel, PatchLevel, NoneLevel:
+		return level, nil
+	default:
+		return EmptyLevel, fmt.Errorf("kind %q wit auto config %q: %w", kc.KeyOrLabel(), kc.AutoLevel, ErrInvalidAutoLevel)
+	}
 }
 
 // Body config allows you to customize the default body prompt
@@ -138,6 +165,8 @@ type NewlinesConfig struct {
 	AfterHeaderTemplate int `yaml:"afterHeaderTemplate,omitempty" default:"0"`
 	// Add newlines after kind
 	AfterKind int `yaml:"afterKind,omitempty" default:"0"`
+	// Add newlines after release notes
+	AfterReleaseNotes int `yaml:"afterReleaseNotes,omitempty" default:"0"`
 	// Add newlines after version
 	AfterVersion int `yaml:"afterVersion,omitempty" default:"0"`
 	// Add newlines before change fragment
@@ -244,13 +273,13 @@ type Config struct {
 	// Relative to [changesDir](#config-changesdir).
 	// example: yaml
 	// headerPath: header.tpl.md
-	HeaderPath string `yaml:"headerPath"`
+	HeaderPath string `yaml:"headerPath,omitempty"`
 	// Filepath for the generated changelog file.
 	// Relative to project root.
 	// ChangelogPath is not required if you are using projects.
 	// example: yaml
 	// changelogPath: CHANGELOG.md
-	ChangelogPath string `yaml:"changelogPath"`
+	ChangelogPath string `yaml:"changelogPath,omitempty"`
 	// File extension for generated version files.
 	// This should probably match your changelog path file.
 	// Must not include the period.
@@ -264,6 +293,10 @@ type Config struct {
 	// Filepath for your version footer file relative to [unreleasedDir](#config-unreleaseddir).
 	// It is also possible to use the '--footer-path' parameter when using the [batch command](../cli/changie_batch.md).
 	VersionFooterPath string `yaml:"versionFooterPath,omitempty"`
+	// Customize the file name generated for new versions or release note files.
+	// The file is placed in the [changesDir](#config-changesdir), so the full path is:
+	// `{{.ChangesDir}}/{{.VersionFileFormat}}`
+	VersionFileFormat string `yaml:"versionFileFormat,omitempty" default:"{{.Version}}.{{config.VersionExt}}" templateType:"BatchData"` //nolint:lll
 	// Customize the file name generated for new fragments.
 	// The default uses the component and kind only if configured for your project.
 	// The file is placed in the unreleased directory, so the full path is:
@@ -271,7 +304,7 @@ type Config struct {
 	// `{{.ChangesDir}}/{{.UnreleasedDir}}/{{.FragmentFileFormat}}.yaml`
 	// example: yaml
 	// fragmentFileFormat: "{{.Kind}}-{{.Custom.Issue}}"
-	FragmentFileFormat string `yaml:"fragmentFileFormat,omitempty" default:"{{.Project}}-{{.Component}}-{{.Kind}}-{{.Time.Format \"20060102-150405\"}}" templateType:"Change"`
+	FragmentFileFormat string `yaml:"fragmentFileFormat,omitempty" default:"{{.Project}}-{{.Component}}-{{.Kind}}-{{.Time.Format \"20060102-150405\"}}" templateType:"Change"` //nolint:lll
 	// Template used to generate version headers.
 	VersionFormat string `yaml:"versionFormat,omitempty" templateType:"BatchData"`
 	// Template used to generate component headers.
@@ -519,6 +552,8 @@ func LoadConfig() (*Config, error) {
 
 	customPath := os.Getenv(configEnvVar)
 	if customPath != "" {
+		// The config path is intentionally chosen by the user via the env var.
+		// #nosec G304,G703
 		bs, err = os.ReadFile(customPath)
 	} else {
 		bs, err = findConfigUpwards()
@@ -548,6 +583,10 @@ func LoadConfig() (*Config, error) {
 		}
 
 		c.FragmentFileFormat += fmt.Sprintf("{{.Time.Format \"%v\"}}", timeFormat)
+	}
+
+	if c.VersionFileFormat == "" {
+		c.VersionFileFormat = "{{.Version}}." + c.VersionExt
 	}
 
 	return &c, nil

@@ -18,6 +18,7 @@ func RootCmd() *cobra.Command {
 Changie is aimed at seemlessly integrating into your release process while also
 being easy to use for developers and your release team.`,
 	}
+	cmd.SilenceUsage = true
 
 	templateCache := core.NewTemplateCache()
 
@@ -30,7 +31,8 @@ being easy to use for developers and your release team.`,
 	cmd.AddCommand(NewLatest().Command)
 	cmd.AddCommand(merge.Command)
 	cmd.AddCommand(NewNew(time.Now, templateCache).Command)
-	cmd.AddCommand(NewNext().Command)
+	cmd.AddCommand(NewNext(templateCache).Command)
+	cmd.AddCommand(NewDiff().Command)
 
 	return cmd
 }

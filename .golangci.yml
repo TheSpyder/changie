@@ -1,53 +1,65 @@
-linters-settings:
-  exhaustive:
-    default-signifies-exhaustive: false
-  goconst:
-    min-len: 5
-    min-occurrences: 5
-  gocyclo:
-    min-complexity: 16
-  goimports:
-    local-prefixes: github.com/miniscruff/changie
-  golint:
-    min-confidence: 0
-  govet:
-    shadow: true
-  misspell:
-    locale: US
-  nolintlint:
-    allow-unused: false # report any unused nolint directives
-    require-explanation: false # don't require an explanation for nolint directives
-    require-specific: false # don't require nolint directives to be specific about which linter is being skipped
+version: "2"
 linters:
   enable:
     - bodyclose
     - dogsled
     - dupl
-    - errcheck
     - exhaustive
-    - goconst
-    - gocyclo
-    - gofmt
-    - goimports
     - goprintffuncname
     - gosec
-    - gosimple
-    - govet
-    - ineffassign
+    - intrange
+    - lll
     - misspell
     - nakedret
     - noctx
     - nolintlint
     - staticcheck
-    - stylecheck
-    - typecheck
     - unconvert
     - unparam
-    - unused
+    - usetesting
     - whitespace
-    - wsl
-issues:
-  exclude-rules:
-    - path: '(.+)_test\.go'
-      linters:
-        - gosec
+    - wsl_v5
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: false
+    misspell:
+      locale: US
+    nolintlint:
+      require-explanation: false
+      require-specific: false
+      allow-unused: false
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - gosec
+        path: (.+)_test\.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gci
+    - gofmt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/org/project)
+        - blank
+        - dot
+        - alias
+        - localmodule
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

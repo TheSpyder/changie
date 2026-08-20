@@ -10,8 +10,8 @@ repo_name: miniscruff/changie
 extra:
   current_version: v1.18.0
   social:
-    - icon: fontawesome/brands/mastodon
-      link: https://fosstodon.org/@miniscruff
+    - icon: fontawesome/brands/bluesky
+      link: https://bsky.app/profile/miniscruff.bsky.social
     - icon: fontawesome/brands/github
       link: https://github.com/miniscruff
     - icon: fontawesome/brands/docker
@@ -109,6 +109,7 @@ nav:
       - cli/changie_completion_fish.md
       - cli/changie_completion_powershell.md
       - cli/changie_completion_zsh.md
+      - cli/changie_diff.md
       - cli/changie_init.md
       - cli/changie_latest.md
       - cli/changie_merge.md

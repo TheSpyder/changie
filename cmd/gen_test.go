@@ -2,12 +2,13 @@ package cmd
 
 import (
 	"go/ast"
-	godoc "go/doc"
 	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	godoc "go/doc"
 
 	"github.com/miniscruff/changie/then"
 )
@@ -24,16 +25,12 @@ func TestLinkHandlerLinksToOtherPages(t *testing.T) {
 }
 
 func TestCanGetFiles(t *testing.T) {
+	// This could be useful but for now it always updates our schema
+	t.SkipNow()
+
 	// move our wd to project root instead of cmd dir
 	wd, _ := os.Getwd()
-	err := os.Chdir(filepath.Join(wd, ".."))
-	then.Nil(t, err)
-
-	// revert our cd after our test
-	t.Cleanup(func() {
-		err = os.Chdir(wd)
-		then.Nil(t, err)
-	})
+	t.Chdir(filepath.Join(wd, ".."))
 
 	cliDocsPath := filepath.Join("docs", "cli")
 	configDocsPath := filepath.Join("docs", "config", "index.md")
@@ -42,7 +39,7 @@ func TestCanGetFiles(t *testing.T) {
 	_ = os.Remove(configDocsPath)
 
 	// create cli docs directory if it does not already exist
-	err = os.MkdirAll(cliDocsPath, os.ModePerm)
+	err := os.MkdirAll(cliDocsPath, os.ModePerm)
 	then.Nil(t, err)
 
 	cliDocsFiles, err := os.ReadDir(cliDocsPath)

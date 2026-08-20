@@ -5,47 +5,41 @@
 class Changie < Formula
   desc "Automated changelog tool for preparing releases with lots of customization options."
   homepage "https://changie.dev"
-  version "1.21.0"
+  version "1.26.0"
   license "MIT"
 
   on_macos do
-    on_intel do
-      url "https://github.com/miniscruff/changie/releases/download/v1.21.0/changie_1.21.0_darwin_amd64.tar.gz"
-      sha256 "0fb4df0bb14747bde6e8991f70680a39b461e39f55be0e7beded5da989153b27"
+    if Hardware::CPU.intel?
+      url "https://github.com/miniscruff/changie/releases/download/v1.26.0/changie_1.26.0_darwin_amd64.tar.gz"
+      sha256 "9a1a4dc8a6901ccd9724b3b9b5ec1354e5038b1b1aa4dceef65976f6462ac7d2"
 
-      def install
+      define_method(:install) do
         bin.install "changie"
       end
     end
-    on_arm do
-      url "https://github.com/miniscruff/changie/releases/download/v1.21.0/changie_1.21.0_darwin_arm64.tar.gz"
-      sha256 "e6f21f97050c9089b8363ff5c11bc2e69fb170cc21194971ec040a2bb2040a85"
+    if Hardware::CPU.arm?
+      url "https://github.com/miniscruff/changie/releases/download/v1.26.0/changie_1.26.0_darwin_arm64.tar.gz"
+      sha256 "ba1a14e0eb220fb9c7d4dc90af462e7f7178a313cdb1299a17aafbb37838a458"
 
-      def install
+      define_method(:install) do
         bin.install "changie"
       end
     end
   end
 
   on_linux do
-    on_intel do
-      if Hardware::CPU.is_64_bit?
-        url "https://github.com/miniscruff/changie/releases/download/v1.21.0/changie_1.21.0_linux_amd64.tar.gz"
-        sha256 "863390fff9d71ba8c833eed5cc2103f8f8211a13999c0601bd7f951f4cd1a65c"
-
-        def install
-          bin.install "changie"
-        end
+    if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
+      url "https://github.com/miniscruff/changie/releases/download/v1.26.0/changie_1.26.0_linux_amd64.tar.gz"
+      sha256 "eab168c8287a6e91912e1c02e5260911232d945bfd3c89d8a0e1ace6bb7b6161"
+      define_method(:install) do
+        bin.install "changie"
       end
     end
-    on_arm do
-      if Hardware::CPU.is_64_bit?
-        url "https://github.com/miniscruff/changie/releases/download/v1.21.0/changie_1.21.0_linux_arm64.tar.gz"
-        sha256 "a1319041b07d783c0e5127f76c8600c91fcac51612e3c1c6490368f747d7daef"
-
-        def install
-          bin.install "changie"
-        end
+    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+      url "https://github.com/miniscruff/changie/releases/download/v1.26.0/changie_1.26.0_linux_arm64.tar.gz"
+      sha256 "ec1e542014b5134f1cf86b3a12e86d566ab5ec9bd3901bf66f42a09cd9865b6e"
+      define_method(:install) do
+        bin.install "changie"
       end
     end
   end

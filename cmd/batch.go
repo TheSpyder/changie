@@ -13,7 +13,10 @@ import (
 	"github.com/miniscruff/changie/core"
 )
 
-var errVersionExists = errors.New("version already exists")
+var (
+	errVersionExists       = errors.New("version already exists")
+	errNoChangesNotAllowed = errors.New("no changes found and allow no changes disabled")
+)
 
 type Batch struct {
 	*cobra.Command
@@ -31,6 +34,7 @@ type Batch struct {
 	Prerelease        []string
 	Meta              []string
 	Force             bool
+	AllowNoChanges    bool
 
 	// Dependencies
 	TimeNow       core.TimeNow
@@ -141,6 +145,12 @@ Changes are sorted in the following order:
 		false,
 		"Force a new version file even if one already exists",
 	)
+	cmd.Flags().BoolVar(
+		&b.AllowNoChanges,
+		"allow-no-changes",
+		true,
+		"Allow batching no change fragments into an empty release note",
+	)
 	cmd.Flags().StringVarP(
 		&b.Project,
 		"project", "j",
@@ -164,8 +174,13 @@ func (b *Batch) getBatchData() (*core.BatchData, error) {
 		return nil, err
 	}
 
+	if !b.AllowNoChanges && len(allChanges) == 0 {
+		return nil, errNoChangesNotAllowed
+	}
+
 	currentVersion, err := core.GetNextVersion(
 		b.config,
+		b.TemplateCache,
 		b.version,
 		b.Prerelease,
 		b.Meta,
@@ -225,7 +240,14 @@ func (b *Batch) Run(cmd *cobra.Command, args []string) (err error) {
 	if b.DryRun {
 		b.writer = cmd.OutOrStdout()
 	} else {
-		versionFilePath := filepath.Join(b.config.ChangesDir, b.Project, data.Version+"."+b.config.VersionExt)
+		var versionFileName string
+
+		versionFileName, err = b.TemplateCache.ExecuteString(b.config.VersionFileFormat, data)
+		if err != nil {
+			return err
+		}
+
+		versionFilePath := filepath.Join(b.config.ChangesDir, b.Project, versionFileName)
 
 		if !b.Force {
 			if exists, existErr := core.FileExists(versionFilePath); exists || existErr != nil {
@@ -248,6 +270,7 @@ func (b *Batch) Run(cmd *cobra.Command, args []string) (err error) {
 		}()
 
 		defer versionFile.Close()
+
 		b.writer = versionFile
 	}
 
@@ -315,6 +338,7 @@ func (b *Batch) Run(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	_ = core.WriteNewlines(b.writer, b.config.Newlines.EndOfVersion)
+	_ = core.WriteNewlines(b.writer, b.config.Newlines.AfterReleaseNotes)
 
 	if !b.DryRun && !b.KeepFragments {
 		err = b.ClearUnreleased(

@@ -44,6 +44,9 @@ func TestNewWithEnvVars(t *testing.T) {
 	reader, writer := then.WithReadWritePipe(t)
 
 	t.Setenv("ENVPREFIX_TESTCONTENT", "Test content")
+	// we need to override this value as it would fail in CI with the interactive system
+	// but is ok here as we override stdin and stdout anyway
+	t.Setenv("CI", "false")
 
 	then.DelayWrite(
 		t, writer,
@@ -78,11 +81,67 @@ func TestNewWithEnvVars(t *testing.T) {
 	then.FileContents(t, changeContent, futurePath, fileInfos[0].Name())
 }
 
-func TestNewCreatesNewFileAfterPrompts(t *testing.T) {
+func TestNewWithCustomEnvVars(t *testing.T) {
 	cfg := newTestConfig()
+	cfg.CustomChoices = []core.Custom{
+		{
+			Key:      "Author",
+			Type:     core.CustomString,
+			Optional: false,
+			Label:    "author",
+		},
+	}
+
 	then.WithTempDirConfig(t, cfg)
 	reader, writer := then.WithReadWritePipe(t)
 
+	t.Setenv("ENVPREFIX_CUSTOM_Author", "me")
+	// we need to override this value as it would fail in CI with the interactive system
+	// but is ok here as we override stdin and stdout anyway
+	t.Setenv("CI", "false")
+
+	then.DelayWrite(
+		t, writer,
+		[]byte{106, 13},
+		[]byte("a message with testcontent"),
+		[]byte{13},
+	)
+
+	cmd := NewNew(
+		newMockTime,
+		core.NewTemplateCache(),
+	)
+	cmd.SetIn(reader)
+
+	then.Nil(t, os.MkdirAll(filepath.Join(cfg.ChangesDir, cfg.UnreleasedDir), 0755))
+
+	err := cmd.Run(cmd.Command, nil)
+	then.Nil(t, err)
+
+	futurePath := filepath.Join(cfg.ChangesDir, cfg.UnreleasedDir)
+	fileInfos, err := os.ReadDir(futurePath)
+	then.Nil(t, err)
+	then.Equals(t, 1, len(fileInfos))
+	then.Equals(t, ".yaml", filepath.Ext(fileInfos[0].Name()))
+
+	changeContent := fmt.Sprintf(
+		"kind: removed\nbody: a message with testcontent\ntime: %s\ncustom:\n    Author: me\n",
+		newMockTime().Format(time.RFC3339Nano),
+	)
+
+	then.FileExists(t, futurePath, fileInfos[0].Name())
+	then.FileContents(t, changeContent, futurePath, fileInfos[0].Name())
+}
+
+func TestNewCreatesNewFileAfterPrompts(t *testing.T) {
+	// we need to override this value as it would fail in CI with the interactive system
+	// but is ok here as we override stdin and stdout anyway
+	t.Setenv("CI", "false")
+
+	cfg := newTestConfig()
+	then.WithTempDirConfig(t, cfg)
+
+	reader, writer := then.WithReadWritePipe(t)
 	then.DelayWrite(
 		t, writer,
 		[]byte{106, 13},
@@ -188,6 +247,10 @@ func TestErrorNewFragmentTemplate(t *testing.T) {
 }
 
 func TestNewOutputsToCmdOutWhenDry(t *testing.T) {
+	// we need to override this value as it would fail in CI with the interactive system
+	// but is ok here as we override stdin and stdout anyway
+	t.Setenv("CI", "false")
+
 	cfg := newTestConfig()
 	cfg.Kinds = []core.KindConfig{}
 	then.WithTempDirConfig(t, cfg)
@@ -220,6 +283,10 @@ func TestNewOutputsToCmdOutWhenDry(t *testing.T) {
 }
 
 func TestNewFragmentTemplateSlash(t *testing.T) {
+	// we need to override this value as it would fail in CI with the interactive system
+	// but is ok here as we override stdin and stdout anyway
+	t.Setenv("CI", "false")
+
 	cfg := newTestConfig()
 	cfg.Components = []string{"test/component"}
 	then.WithTempDirConfig(t, cfg)
@@ -257,4 +324,28 @@ func TestNewFragmentTemplateSlash(t *testing.T) {
 
 	then.FileExists(t, futurePath, fileInfos[0].Name())
 	then.FileContents(t, changeContent, futurePath, fileInfos[0].Name())
+}
+
+func TestPromptEnabled(t *testing.T) {
+	t.Run("prompts enabled by default", func(t *testing.T) {
+		n := NewNew(nil, nil)
+
+		t.Setenv("CI", "false")
+		then.True(t, n.parsePromptEnabled())
+	})
+
+	t.Run("prompts disabled with flag", func(t *testing.T) {
+		n := NewNew(nil, nil)
+		n.Interactive = false
+
+		t.Setenv("CI", "false")
+		then.False(t, n.parsePromptEnabled())
+	})
+
+	t.Run("prompts disabled with CI env var", func(t *testing.T) {
+		n := NewNew(nil, nil)
+
+		t.Setenv("CI", "true")
+		then.False(t, n.parsePromptEnabled())
+	})
 }

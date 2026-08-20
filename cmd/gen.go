@@ -1,9 +1,9 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"go/ast"
-	godoc "go/doc"
 	"go/parser"
 	"go/token"
 	"io"
@@ -14,8 +14,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/invopop/jsonschema"
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
+
+	godoc "go/doc"
 
 	"github.com/miniscruff/changie/core"
 )
@@ -102,6 +105,30 @@ func (g *Gen) Run(cmd *cobra.Command, args []string) error {
 	// This auto generates a h4 which is added to our table of contents.
 	cmd.Root().DisableAutoGenTag = true
 
+	jsonReflector := jsonschema.Reflector{}
+	jsonReflector.FieldNameTag = "yaml"
+	jsonReflector.ExpandedStruct = true
+
+	err = jsonReflector.AddGoComments("github.com/miniscruff/changie", "./")
+	if err != nil {
+		return fmt.Errorf("creating jsonschema go comments: %w", err)
+	}
+
+	jsonSchemaFile, err := os.Create(filepath.Join("docs", "schema.json"))
+	if err != nil {
+		return fmt.Errorf("creating or opening json schema file: %w", err)
+	}
+	defer jsonSchemaFile.Close()
+
+	schema := jsonReflector.Reflect(&core.Config{})
+	schemaEncoder := json.NewEncoder(jsonSchemaFile)
+	schemaEncoder.SetIndent("", "  ")
+
+	err = schemaEncoder.Encode(schema)
+	if err != nil {
+		return fmt.Errorf("creating or opening config index: %w", err)
+	}
+
 	return doc.GenMarkdownTreeCustom(cmd.Root(), "docs/cli", filePrepender, linkHandler)
 }
 
@@ -152,11 +179,7 @@ func buildUniqueTypes(
 	completed := make(map[string]struct{}, 0)
 	allTypeProps := make([]TypeProps, 0)
 
-	for {
-		if len(typeQueue) == 0 {
-			break
-		}
-
+	for len(typeQueue) != 0 {
 		typeName := typeQueue[0]
 		typeQueue = typeQueue[1:]
 
@@ -185,10 +208,32 @@ func getCorePackages(packageName string) (*token.FileSet, CoreTypes) {
 	packagePath := fmt.Sprintf("./%v", packageName)
 
 	fset := token.NewFileSet()
-	packages, _ := parser.ParseDir(fset, packagePath, nil, parser.ParseComments)
 
-	corePackage := packages[packageName]
-	p := godoc.New(corePackage, "./", 0)
+	entries, err := os.ReadDir(packagePath)
+	if err != nil {
+		return fset, corePackages
+	}
+
+	files := make([]*ast.File, 0, len(entries))
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") {
+			continue
+		}
+
+		file, err := parser.ParseFile(fset, filepath.Join(packagePath, name), nil, parser.ParseComments)
+		if err != nil || file.Name.Name != packageName {
+			continue
+		}
+
+		files = append(files, file)
+	}
+
+	p, err := godoc.NewFromFiles(fset, files, "./")
+	if err != nil {
+		return fset, corePackages
+	}
 
 	for _, t := range p.Types {
 		corePackages[t.Name] = t
@@ -379,24 +424,26 @@ func writeType(writer io.Writer, typeProps TypeProps) error {
 	// Do not write our root Config type header
 	if typeProps.Name != "Config" {
 		anchor := strings.ToLower(typeProps.Name) + "-type"
-		_, err := writer.Write([]byte(fmt.Sprintf(
+
+		_, err := writer.Write(fmt.Appendf(
+			[]byte{},
 			"## %s %v\n%s\n",
 			typeProps.Name,
 			buildSourceAnchorLink(anchor, typeProps.File, typeProps.Line),
 			typeProps.Doc,
-		)))
-
+		))
 		if err != nil {
 			return err
 		}
 	}
 
 	if typeProps.ExampleContent != "" {
-		_, _ = writer.Write([]byte(fmt.Sprintf(
+		_, _ = writer.Write(fmt.Appendf(
+			[]byte{},
 			"??? Example\n    ```%v\n    %v\n    ```\n",
 			typeProps.ExampleLang,
 			strings.Trim(typeProps.ExampleContent, "\n"),
-		)))
+		))
 	}
 
 	for _, f := range typeProps.Fields {
@@ -419,33 +466,36 @@ func writeField(writer io.Writer, parent TypeProps, field FieldProps) error {
 
 	anchor := strings.ToLower(parent.Name) + "-" + strings.ToLower(field.Key)
 
-	_, err := writer.Write([]byte(fmt.Sprintf(
+	_, err := writer.Write(fmt.Appendf(
+		[]byte{},
 		"### %s %v\n",
 		field.Key,
 		buildSourceAnchorLink(anchor, field.File, field.Line),
-	)))
+	))
 	if err != nil {
 		return err
 	}
 
 	switch {
 	case field.IsCustomType:
-		_, _ = writer.Write([]byte(fmt.Sprintf(
+		_, _ = writer.Write(fmt.Appendf(
+			[]byte{},
 			"type: [%s%s](#%s-type)",
 			typePrefix,
 			field.TypeName,
 			strings.ToLower(field.TypeName),
-		)))
+		))
 	case field.TypeName != "":
-		_, _ = writer.Write([]byte(fmt.Sprintf("type: `%s%s`", typePrefix, field.TypeName)))
+		_, _ = writer.Write(fmt.Appendf([]byte{}, "type: `%s%s`", typePrefix, field.TypeName))
 	case field.MapKeyTypeName != "":
 		// currently no option of having a map of custom types or slices
 		// but that is not used right now
-		_, _ = writer.Write([]byte(fmt.Sprintf(
+		_, _ = writer.Write(fmt.Appendf(
+			[]byte{},
 			"type: map [ `%s` ] `%s`",
 			field.MapKeyTypeName,
 			field.MapValueTypeName,
-		)))
+		))
 	}
 
 	if field.TypeName != "" || field.MapKeyTypeName != "" {
@@ -460,22 +510,24 @@ func writeField(writer io.Writer, parent TypeProps, field FieldProps) error {
 
 	if field.TemplateType != "" {
 		_, _ = writer.Write([]byte(" | "))
-		_, _ = writer.Write([]byte(fmt.Sprintf(
+		_, _ = writer.Write(fmt.Appendf(
+			[]byte{},
 			"template type: [%s](#%s-type)",
 			field.TemplateType,
 			strings.ToLower(field.TemplateType),
-		)))
+		))
 	}
 
 	_, _ = writer.Write([]byte("\n\n"))
 	_, _ = writer.Write([]byte(field.Doc))
 
 	if field.ExampleContent != "" {
-		_, _ = writer.Write([]byte(fmt.Sprintf(
+		_, _ = writer.Write(fmt.Appendf(
+			[]byte{},
 			"??? Example\n    ```%v\n    %v\n    ```\n",
 			field.ExampleLang,
 			strings.Trim(field.ExampleContent, "\n"),
-		)))
+		))
 	}
 
 	_, _ = writer.Write([]byte("\n"))

@@ -23,6 +23,7 @@ func batchTestConfig() *core.Config {
 		UnreleasedDir:      "future",
 		HeaderPath:         "",
 		ChangelogPath:      "news.md",
+		VersionFileFormat:  "{{.Version}}.md",
 		VersionExt:         "md",
 		VersionFormat:      "## {{.Version}}",
 		KindFormat:         "### {{.Kind}}",
@@ -85,6 +86,7 @@ func TestBatchCanBatch(t *testing.T) {
 
 func TestBatchCanBatchWithProject(t *testing.T) {
 	cfg := batchTestConfig()
+	cfg.VersionFileFormat = "{{.Version}}-custom-format.md"
 	cfg.Projects = []core.ProjectConfig{
 		{
 			Label: "A",
@@ -111,7 +113,7 @@ func TestBatchCanBatchWithProject(t *testing.T) {
 ### removed
 * C`
 
-	then.FileContents(t, verContents, cfg.ChangesDir, "a", "v0.2.0.md")
+	then.FileContents(t, verContents, cfg.ChangesDir, "a", "v0.2.0-custom-format.md")
 	then.DirectoryFileCount(t, 1, cfg.ChangesDir, cfg.UnreleasedDir)
 }
 
@@ -172,6 +174,7 @@ func TestBatchCanAddNewLinesBeforeAndAfterKindHeader(t *testing.T) {
 func TestBatchErrorStandardBadWriter(t *testing.T) {
 	cfg := batchTestConfig()
 	then.WithTempDirConfig(t, cfg)
+
 	w := then.NewErrWriter()
 
 	batch := NewBatch(time.Now, core.NewTemplateCache())
@@ -252,7 +255,7 @@ func TestBatchDryRun(t *testing.T) {
 
 	var builder strings.Builder
 
-	batch.Command.SetOut(&builder)
+	batch.SetOut(&builder)
 	writeChangeFile(t, cfg, &core.Change{Kind: "added", Body: "D"})
 	writeChangeFile(t, cfg, &core.Change{Kind: "added", Body: "E"})
 	writeChangeFile(t, cfg, &core.Change{Kind: "removed", Body: "F"})
@@ -281,7 +284,7 @@ func TestBatchDryRunWithKeys(t *testing.T) {
 
 	var builder strings.Builder
 
-	batch.Command.SetOut(&builder)
+	batch.SetOut(&builder)
 	writeChangeFile(t, cfg, &core.Change{Kind: "added", Body: "D"})
 	writeChangeFile(t, cfg, &core.Change{Kind: "added", Body: "E"})
 	writeChangeFile(t, cfg, &core.Change{Kind: "removed", Body: "F"})
@@ -392,6 +395,20 @@ func TestBatchErrorBadChanges(t *testing.T) {
 
 	err := batch.Run(batch.Command, []string{"v0.1.1"})
 	then.NotNil(t, err)
+}
+
+func TestBatchErrorNoChangesAndNotAllowed(t *testing.T) {
+	cfg := batchTestConfig()
+	then.WithTempDirConfig(t, cfg)
+
+	err := os.MkdirAll(filepath.Join("news", "future"), 0777)
+	then.Nil(t, err)
+
+	batch := NewBatch(time.Now, core.NewTemplateCache())
+	batch.AllowNoChanges = false
+
+	err = batch.Run(batch.Command, []string{"v0.1.1"})
+	then.Err(t, errNoChangesNotAllowed, err)
 }
 
 func TestBatchOverrideIfForced(t *testing.T) {
@@ -614,6 +631,33 @@ func TestBatchVersionFileWithComponentHeaders(t *testing.T) {
 	then.Equals(t, expected, builder.String())
 }
 
+func TestBatchVersionFileWithoutComponentHeadersGroupsByKind(t *testing.T) {
+	cfg := batchTestConfig()
+	cfg.Components = []string{"cli", "web"}
+	cfg.ComponentFormat = ""
+	cfg.KindFormat = "### {{.Kind}}"
+	cfg.ChangeFormat = "* {{.Body}} ({{.Component}})"
+
+	then.WithTempDirConfig(t, cfg)
+
+	writeChangeFile(t, cfg, &core.Change{Body: "cli added", Kind: "added", Component: "cli"})
+	writeChangeFile(t, cfg, &core.Change{Body: "cli removed", Kind: "removed", Component: "cli"})
+	writeChangeFile(t, cfg, &core.Change{Body: "web added", Kind: "added", Component: "web"})
+
+	batch := NewBatch(time.Now, core.NewTemplateCache())
+	err := batch.Run(batch.Command, []string{"v0.2.0"})
+	then.Nil(t, err)
+
+	verContents := `## v0.2.0
+### added
+* cli added (cli)
+* web added (web)
+### removed
+* cli removed (cli)`
+
+	then.FileContents(t, verContents, cfg.ChangesDir, "v0.2.0.md")
+}
+
 func TestBatchClearUnreleasedRemovesUnreleasedFilesIncludingHeader(t *testing.T) {
 	then.WithTempDir(t)
 
@@ -686,4 +730,28 @@ func TestBatchClearUnreleasedMovesFilesIncludingHeaderIfSpecified(t *testing.T) 
 	then.DirectoryFileCount(t, 4, cfg.ChangesDir, "beta")
 	// .gitkeep should remain
 	then.DirectoryFileCount(t, 1, cfg.ChangesDir, cfg.UnreleasedDir)
+}
+
+func TestBatchCanAddNewLinesAfterReleaseNotes(t *testing.T) {
+	cfg := batchTestConfig()
+	cfg.Newlines.AfterReleaseNotes = 2
+
+	then.WithTempDirConfig(t, cfg)
+
+	writeChangeFile(t, cfg, &core.Change{Kind: "added", Body: "A"})
+	writeChangeFile(t, cfg, &core.Change{Kind: "removed", Body: "B"})
+
+	batch := NewBatch(time.Now, core.NewTemplateCache())
+	err := batch.Run(batch.Command, []string{"v0.2.0"})
+	then.Nil(t, err)
+
+	verContents := `## v0.2.0
+### added
+* A
+### removed
+* B
+
+`
+	then.FileContents(t, verContents, cfg.ChangesDir, "v0.2.0.md")
+	then.DirectoryFileCount(t, 0, cfg.ChangesDir, cfg.UnreleasedDir)
 }

@@ -27,7 +27,7 @@ func TestNextVersionWithPatch(t *testing.T) {
 	cfg := nextTestConfig()
 	then.WithTempDirConfig(t, cfg)
 
-	next := NewNext()
+	next := NewNext(core.NewTemplateCache())
 	builder := strings.Builder{}
 
 	next.SetOut(&builder)
@@ -55,7 +55,7 @@ func TestNextVersionWithProject(t *testing.T) {
 	then.WithTempDirConfig(t, cfg)
 
 	builder := strings.Builder{}
-	next := NewNext()
+	next := NewNext(core.NewTemplateCache())
 	next.Project = "w"
 
 	next.SetOut(&builder)
@@ -83,7 +83,7 @@ func TestNextVersionWithProjectBadProject(t *testing.T) {
 	then.WithTempDirConfig(t, cfg)
 
 	builder := strings.Builder{}
-	next := NewNext()
+	next := NewNext(core.NewTemplateCache())
 	next.Project = "missing_proj"
 
 	next.SetOut(&builder)
@@ -110,7 +110,7 @@ func TestNextVersionWithAuto(t *testing.T) {
 	then.WithTempDirConfig(t, cfg)
 
 	builder := strings.Builder{}
-	next := NewNext()
+	next := NewNext(core.NewTemplateCache())
 
 	next.SetOut(&builder)
 	then.CreateFile(t, cfg.ChangesDir, "v0.0.1.md")
@@ -135,7 +135,7 @@ func TestNextVersionWithPrereleaseAndMeta(t *testing.T) {
 	cfg := nextTestConfig()
 	then.WithTempDirConfig(t, cfg)
 
-	next := NewNext()
+	next := NewNext(core.NewTemplateCache())
 	builder := strings.Builder{}
 
 	next.Prerelease = []string{"b1"}
@@ -151,10 +151,24 @@ func TestNextVersionWithPrereleaseAndMeta(t *testing.T) {
 	then.Equals(t, "v0.1.1-b1+hash", builder.String())
 }
 
+func TestNextVersionWithoutAnyChangesIsV1(t *testing.T) {
+	cfg := nextTestConfig()
+	then.WithTempDirConfig(t, cfg)
+
+	builder := strings.Builder{}
+
+	next := NewNext(core.NewTemplateCache())
+	next.SetOut(&builder)
+
+	err := next.Run(next.Command, []string{"major"})
+	then.Nil(t, err)
+	then.Equals(t, "v1.0.0", builder.String())
+}
+
 func TestErrorNextVersionBadConfig(t *testing.T) {
 	then.WithTempDir(t)
 
-	next := NewNext()
+	next := NewNext(core.NewTemplateCache())
 	builder := strings.Builder{}
 
 	next.SetOut(&builder)
@@ -167,7 +181,7 @@ func TestErrorNextPartNotSupported(t *testing.T) {
 	cfg := nextTestConfig()
 	then.WithTempDirConfig(t, cfg)
 
-	next := NewNext()
+	next := NewNext(core.NewTemplateCache())
 	builder := strings.Builder{}
 
 	next.SetOut(&builder)
@@ -181,7 +195,7 @@ func TestErrorNextUnableToGetChanges(t *testing.T) {
 	cfg := nextTestConfig()
 	then.WithTempDirConfig(t, cfg)
 
-	next := NewNext()
+	next := NewNext(core.NewTemplateCache())
 	builder := strings.Builder{}
 	aVer := []byte("not a valid change")
 
@@ -190,18 +204,5 @@ func TestErrorNextUnableToGetChanges(t *testing.T) {
 
 	// bad yaml will fail to load changes
 	err := next.Run(next.Command, []string{"auto"})
-	then.NotNil(t, err)
-}
-
-func TestErrorNextUnableToGetVersions(t *testing.T) {
-	then.WithTempDirConfig(t, nextTestConfig())
-
-	next := NewNext()
-	builder := strings.Builder{}
-
-	next.SetOut(&builder)
-
-	// no files, means bad read for get versions
-	err := next.Run(next.Command, []string{"major"})
 	then.NotNil(t, err)
 }

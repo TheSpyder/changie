@@ -15,13 +15,14 @@ type New struct {
 	*cobra.Command
 
 	// cli args
-	DryRun     bool
-	Projects   []string
-	Component  string
-	Kind       string
-	Body       string
-	BodyEditor bool
-	Custom     []string
+	DryRun      bool
+	Projects    []string
+	Component   string
+	Kind        string
+	Body        string
+	BodyEditor  bool
+	Custom      []string
+	Interactive bool
 
 	// dependencies
 	TimeNow       core.TimeNow
@@ -42,7 +43,18 @@ func NewNew(
 		Short: "Create a new change file",
 		Long: `Creates a new change file.
 Change files are processed when batching a new release.
-Each version is merged together for the overall project changelog.`,
+Each version is merged together for the overall project changelog.
+
+Prompts are disabled and this command will fail if any values
+are not defined or valid and if any of the following are true:
+
+Custom prompt values can also be passed in via an environment variable.
+Use the following format: "${env var prefix}_CUSTOM_${custom key}=value".
+Example: "CHANGIE_CUSTOM_Author=miniscruff"
+
+1. CI env var is true
+2. --interactive=false
+`,
 		Args: cobra.NoArgs,
 		RunE: n.Run,
 	}
@@ -89,6 +101,13 @@ Each version is merged together for the overall project changelog.`,
 		nil,
 		"Set custom values without a prompt",
 	)
+	cmd.Flags().BoolVarP(
+		&n.Interactive,
+		"interactive",
+		"i",
+		true,
+		"Set missing values with prompts",
+	)
 
 	n.Command = cmd
 
@@ -106,6 +125,14 @@ func (n *New) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	changieEnvs := config.EnvVars()
+	for key, value := range changieEnvs {
+		key, found := strings.CutPrefix(key, "CUSTOM_")
+		if found {
+			customValues[key] = value
+		}
+	}
+
 	prompts := &core.Prompts{
 		StdinReader:      n.InOrStdin(),
 		BodyEditor:       n.BodyEditor,
@@ -117,6 +144,7 @@ func (n *New) Run(cmd *cobra.Command, args []string) error {
 		Config:           config,
 		Customs:          customValues,
 		EditorCmdBuilder: core.BuildCommand,
+		Enabled:          n.parsePromptEnabled(),
 	}
 
 	changes, err := prompts.BuildChanges()
@@ -168,4 +196,8 @@ func (n *New) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	return err
+}
+
+func (n *New) parsePromptEnabled() bool {
+	return n.Interactive && strings.ToLower(os.Getenv("CI")) != "true"
 }

@@ -4,19 +4,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/cqroot/prompt"
 	"github.com/cqroot/prompt/choose"
+	"github.com/cqroot/prompt/constants"
 	"github.com/cqroot/prompt/input"
+	"github.com/cqroot/prompt/multichoose"
 	"github.com/cqroot/prompt/write"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // CustomType determines the possible custom choice types.
-// Current values are: `string`, `block`, `int` and `enum`.
+// Current values are: `string`, `block`, `int`, `enum` and `enums`.
 type CustomType string
 
 const (
@@ -24,7 +27,12 @@ const (
 	CustomBlock  CustomType = "block"
 	CustomInt    CustomType = "int"
 	CustomEnum   CustomType = "enum"
+	CustomEnums  CustomType = "enums"
 )
+
+// enumsSeparator joins and splits the selected values of an "enums" custom
+// choice, as the selections are stored as a single string.
+const enumsSeparator = ", "
 
 var (
 	errInvalidPromptType   = errors.New("invalid prompt type")
@@ -53,7 +61,7 @@ type Custom struct {
 	// This should only contain alpha numeric characters, usually starting with a capital.
 	// example: yaml
 	// key: Issue
-	Key string `yaml:"" required:"true"`
+	Key string `yaml:"key" required:"true"`
 
 	// Specifies the type of choice which changes the prompt.
 	//
@@ -63,7 +71,8 @@ type Custom struct {
 	// block | Multiline text | [minLength](#custom-minlength) and [maxLength](#custom-maxlength)
 	// int | Whole numbers | [minInt](#custom-minint) and [maxInt](#custom-maxint)
 	// enum | Limited set of strings | [enumOptions](#custom-enumoptions) is used to specify values
-	Type CustomType `yaml:"" required:"true"`
+	// enums | Multiple values from a limited set of strings | [enumOptions](#custom-enumoptions) is used to specify values
+	Type CustomType `yaml:"type" required:"true"`
 
 	// If true, an empty value will not fail validation.
 	// The optional check is handled before min so you can specify that the value is optional but if it
@@ -82,12 +91,12 @@ type Custom struct {
 	// PROJ-{{.Custom.TicketNumber}}
 	// {{- end}}
 	// {{.Body}}
-	Optional bool `yaml:",omitempty" default:"false"`
+	Optional bool `yaml:"optional,omitempty" default:"false"`
 	// Description used in the prompt when asking for the choice.
 	// If empty key is used instead.
 	// example: yaml
 	// label: GitHub Username
-	Label string `yaml:",omitempty" default:""`
+	Label string `yaml:"label,omitempty" default:""`
 	// If specified the input value must be greater than or equal to minInt.
 	MinInt *int64 `yaml:"minInt,omitempty" default:"nil"`
 	// If specified the input value must be less than or equal to maxInt.
@@ -96,8 +105,8 @@ type Custom struct {
 	MinLength *int64 `yaml:"minLength,omitempty" default:"nil"`
 	// If specified string input must be no more than this long
 	MaxLength *int64 `yaml:"maxLength,omitempty" default:"nil"`
-	// When using the enum type, you must also specify what possible options to allow.
-	// Users will be given a selection list to select the value they want.
+	// When using the enum or enums type, you must also specify what possible options to allow.
+	// Users will be given a selection list to select the value, or values, they want.
 	EnumOptions []string `yaml:"enumOptions,omitempty"`
 }
 
@@ -140,13 +149,78 @@ func (c Custom) askInt(stdinReader io.Reader) (string, error) {
 		)
 }
 
+// Scrolling theme for cqroot/prompt. Allows items to be scrolled through
+// using the arrow keys.
+//
+// choices is a list of enum options to display.
+// cursor is the index of the currently selected item.
+func ThemeScroll(choices []choose.Choice, cursor int) string {
+	s := strings.Builder{}
+	s.WriteString("\n")
+
+	numChoices := len(choices)
+	index := cursor
+	limit := min(10, numChoices)
+	start := 0
+	end := limit
+
+	// Create a slice of items to display
+	if numChoices > limit {
+		if index < limit/2 {
+			end = limit
+		} else if index >= limit/2 && index <= numChoices-limit/2 {
+			start = index - limit/2
+			end = index + limit/2
+			index = limit / 2
+		} else {
+			start = numChoices - limit
+			end = numChoices
+			index = limit - (numChoices - index)
+		}
+	}
+
+	// Loop through the slice and display each item.
+	// We will determine if the item is selected or not by calling isSelected
+	// with the index of the item, but since we're only displaying a slice of
+	// the items we need to offset the index.
+	for i, choice := range choices[start:end] {
+		// Check if the item is the one at the cursor's location
+		isCursor := index == i
+
+		if isCursor {
+			s.WriteString(constants.DefaultSelectedItemStyle.Render(fmt.Sprintf("• %s", choice.Text)))
+		} else {
+			s.WriteString(constants.DefaultItemStyle.Render(fmt.Sprintf("  %s", choice.Text)))
+		}
+
+		s.WriteString("\n")
+	}
+
+	return s.String()
+}
+
 func (c Custom) askEnum(stdinReader io.Reader) (string, error) {
 	return prompt.New().Ask(c.DisplayLabel()).
 		Choose(
 			c.EnumOptions,
 			choose.WithHelp(true),
 			choose.WithTeaProgramOpts(tea.WithInput(stdinReader)),
+			choose.WithTheme(ThemeScroll),
 		)
+}
+
+func (c Custom) askEnums(stdinReader io.Reader) (string, error) {
+	values, err := prompt.New().Ask(c.DisplayLabel()).
+		MultiChoose(
+			c.EnumOptions,
+			multichoose.WithHelp(true),
+			multichoose.WithTeaProgramOpts(tea.WithInput(stdinReader)),
+		)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.Join(values, enumsSeparator), nil
 }
 
 // CreatePrompt will create a promptui select or prompt from a custom choice
@@ -160,6 +234,8 @@ func (c Custom) AskPrompt(stdinReader io.Reader) (string, error) {
 		return c.askInt(stdinReader)
 	case CustomEnum:
 		return c.askEnum(stdinReader)
+	case CustomEnums:
+		return c.askEnums(stdinReader)
 	}
 
 	return "", errInvalidPromptType
@@ -173,6 +249,8 @@ func (c Custom) Validate(input string) error {
 		return c.validateInt(input)
 	case CustomEnum:
 		return c.validateEnum(input)
+	case CustomEnums:
+		return c.validateEnums(input)
 	}
 
 	return errInvalidPromptType
@@ -202,7 +280,6 @@ func (c Custom) validateInt(input string) error {
 	}
 
 	value, err := strconv.ParseInt(input, base10, bit64)
-
 	if err != nil {
 		return errInvalidIntInput
 	}
@@ -219,13 +296,25 @@ func (c Custom) validateInt(input string) error {
 }
 
 func (c Custom) validateEnum(input string) error {
-	for _, value := range c.EnumOptions {
-		if input == value {
-			return nil
-		}
+	if slices.Contains(c.EnumOptions, input) {
+		return nil
 	}
 
 	return fmt.Errorf("%w: %s", errInvalidEnum, input)
+}
+
+func (c Custom) validateEnums(input string) error {
+	if c.Optional && input == "" {
+		return nil
+	}
+
+	for _, value := range strings.Split(input, enumsSeparator) {
+		if !slices.Contains(c.EnumOptions, value) {
+			return fmt.Errorf("%w: %s", errInvalidEnum, value)
+		}
+	}
+
+	return nil
 }
 
 // CustomMapFromStrings will parse a CLI argument of strings into a key value map

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -82,20 +83,26 @@ func (m *Merge) mergeProject(
 ) error {
 	var writer io.Writer
 	if m.DryRun {
-		writer = m.Command.OutOrStdout()
+		writer = m.OutOrStdout()
 	} else {
+		dirErr := os.MkdirAll(filepath.Dir(changelogPath), core.CreateDirMode)
+		if dirErr != nil {
+			return fmt.Errorf("creating changelog file directory: %w", dirErr)
+		}
+
 		changeFile, changeErr := os.Create(changelogPath)
 		if changeErr != nil {
-			return changeErr
+			return fmt.Errorf("creating changelog file: %w", changeErr)
 		}
 
 		defer changeFile.Close()
+
 		writer = changeFile
 	}
 
 	allVersions, err := core.GetAllVersions(cfg, false, project)
 	if err != nil {
-		return err
+		return fmt.Errorf("finding release notes: %w", err)
 	}
 
 	if cfg.HeaderPath != "" {

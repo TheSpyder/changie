@@ -2,9 +2,11 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,6 +62,10 @@ func GetAllVersions(
 	}
 
 	fileInfos, err := os.ReadDir(versionsPath)
+	if err != nil && errors.Is(err, fs.ErrNotExist) {
+		return allVersions, nil
+	}
+
 	if err != nil {
 		return allVersions, fmt.Errorf("reading files from '%s': %w", versionsPath, err)
 	}
@@ -113,13 +119,12 @@ func ValidBumpLevel(level string) bool {
 		level == AutoLevel
 }
 
-func HighestAutoLevel(config *Config, allChanges []Change) (string, error) {
+func HighestAutoLevel(config *Config, cache *TemplateCache, allChanges []Change) (string, error) {
 	if len(allChanges) == 0 {
 		return "", ErrNoChangesFoundForAuto
 	}
 
 	highestLevel := EmptyLevel
-	err := ErrNoChangesFoundForAuto
 
 	for _, change := range allChanges {
 		for _, kc := range config.Kinds {
@@ -127,20 +132,23 @@ func HighestAutoLevel(config *Config, allChanges []Change) (string, error) {
 				continue
 			}
 
-			switch kc.AutoLevel {
+			level, err := kc.AutoLevelForChange(cache, change)
+			if err != nil {
+				return EmptyLevel, err
+			}
+
+			switch level {
 			case MajorLevel:
 				// major is the highest one, so we can just return it
 				return MajorLevel, nil
 			case PatchLevel:
 				if highestLevel == EmptyLevel {
 					highestLevel = PatchLevel
-					err = nil
 				}
 			case MinorLevel:
 				// bump to minor if we have a minor level
 				if highestLevel == PatchLevel || highestLevel == EmptyLevel {
 					highestLevel = MinorLevel
-					err = nil
 				}
 			case EmptyLevel:
 				return EmptyLevel, ErrMissingAutoLevel
@@ -148,11 +156,16 @@ func HighestAutoLevel(config *Config, allChanges []Change) (string, error) {
 		}
 	}
 
-	return highestLevel, err
+	if highestLevel == EmptyLevel {
+		return EmptyLevel, ErrNoChangesFoundForAuto
+	}
+
+	return highestLevel, nil
 }
 
 func GetNextVersion(
 	config *Config,
+	cache *TemplateCache,
 	partOrVersion string,
 	prerelease, meta []string,
 	allChanges []Change,
@@ -178,7 +191,7 @@ func GetNextVersion(
 		}
 
 		if partOrVersion == AutoLevel {
-			partOrVersion, err = HighestAutoLevel(config, allChanges)
+			partOrVersion, err = HighestAutoLevel(config, cache, allChanges)
 			if err != nil {
 				return nil, err
 			}
@@ -276,8 +289,9 @@ func LoadEnvVars(config *Config, envs []string) map[string]string {
 	}
 
 	for k, v := range EnvVarMap(envs) {
-		if strings.HasPrefix(k, config.EnvPrefix) {
-			ret[strings.TrimPrefix(k, config.EnvPrefix)] = v
+		key, found := strings.CutPrefix(k, config.EnvPrefix)
+		if found {
+			ret[key] = v
 		}
 	}
 
@@ -376,8 +390,9 @@ func BuildCommand(editorFilePath string) (EditorRunner, error) {
 
 	args = append(args, editorFilePath)
 
-	// #nosec G204
-	cmd := exec.Command(args[0], args[1:]...)
+	// The editor command is intentionally taken from the user's 'EDITOR' env variable.
+	// #nosec G204,G702
+	cmd := exec.CommandContext(context.Background(), args[0], args[1:]...)
 
 	// Set the stdin and stdout of the command to the current process's stdin and stdout
 	cmd.Stdin = os.Stdin
